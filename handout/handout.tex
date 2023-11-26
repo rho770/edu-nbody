@@ -1,0 +1,140 @@
+\documentclass{tufte-handout}
+
+\usepackage{amsmath}
+\usepackage{nicefrac}
+\usepackage{fancyvrb, cprotect}
+\fvset{fontfamily=courier,fontsize=\small,commandchars=|^~}
+\newcommand*{\fvtextcolor}[2]{\textcolor{#1}{#2}}
+
+\title{A Simple Many Body Code}
+\author{T. Hater (t.hater@fz-juelich.de)}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+This project guides you through the process of porting a very simple
+program from a CPU-only implementation to an optimised CUDA code,
+focusing on central optimisation techniques.
+
+Keep a log of changes and the corresponding performance data. You should
+use the GitLab repository to track your progress. Collect interesting results
+for your presentation.
+
+\section{Introduction}
+
+Before we start working with the GPU, we are going to start with the
+original program which will be ported to CUDA. The example is a simple
+N-body simulation of gravitational interaction. A set of $N$
+particles of mass $m$
+is uniformly distributed in the unit box $[0,1)^3$.
+The evolution of the system is given by the equations of motion
+\begin{align*}
+  \ddot{\mathbf{r}}^{(n)}_i &= \sum_{j \neq i} G\cdot m\cdot\frac{\mathbf{r}_i^{(n)} - \mathbf{r}_j^{(n)}}{\left|\mathbf{r}_i^{(n)} - \mathbf{r}_j^{(n)}\right|^3} \\
+\end{align*}
+For handling the temporal integration, we are going to use a simple
+Euler scheme to compute
+\begin{align*}
+  \dot{\mathbf{r}}^{(n+1)}_i &= \dot{\mathbf{r}}^{(n)}_i + \Delta t \cdot \ddot{\mathbf{r}}_i^{(n)} \\
+  \mathbf{r}^{(n+1)}_i &= \mathbf{r}^{(n)}_i + \Delta t \cdot \dot{\mathbf{r}}^{(n+1)}_i
+\end{align*}
+
+\section{Analysis}
+Familiarise yourselves with the source code, which is quite short and
+straightforward. Next, develop an understanding of the critical paths. 
+
+\begin{enumerate}
+\item Profile execution on a single core and identify important
+  routines.
+\item Identify the performance limiters by analysing the algorithm. Verify the hypothesis
+  using performance counters. Do you expect a different limiter on the GPU?
+\item Design and implement a measure for correctness. Check this\marginnote{%
+This extends to all tasks. Document what is working and what not.
+Performance is only relevant if the code is correct.}
+  criterion for all tasks!
+\end{enumerate}
+
+\section{Porting and Basic Optimisations}
+Your first task is to provide a working implementation for all the
+kernels in CUDA. Insert the proper data
+movements and kernel invocations; eliminate superfluous data
+movements.
+
+Document the expected bottlenecks for both kernels on the CPU and the GPU.
+Take into account vector execution units, instruction throughput, bandwidths
+and latencies (cache and memory) etc.
+
+\section{Storage Format}
+To improve memory access replace the storage of the particle data
+from a single array holding structures of vectors. The new storage\marginnote{%
+Obviously, this is a trade-off between space and (possibly) speed. What effect
+will this have on the maximum simulation size?
+}
+format should use two arrays of \emph{four element vectors}, where
+the last element in each vector is left untouched.
+
+For GPUs, this change allows for better \emph{coalescing}, i.e. the
+combining of memory requests from different threads into larger chunks.
+This in turn reduces the pressure on the memory system.
+
+\section{Shared Memory}
+Next, we are going to utilize \emph{shared memory} \marginnote{%
+  \emph{Shared memory} is essentially like a cache on a CPU: small,
+  fast and shared between cooperating threads. However, we have to
+  manage this memory explicitly. }  to further speed up memory
+access. Both this and coalescing are central ideas for improving the
+performance of CUDA programs, which will come up frequently.
+
+\begin{enumerate}
+\item In the kernel add a shared memory array for the
+  particle positions so that every thread in a block can store a
+  position.
+\item Split the loop over all $N$ particles interacting with the
+  local one into small loops processing a tile of particles at a time.
+  \marginnote{%
+    By having each thread copy the local element, all threads will
+    fill the chunk together. As all threads need to read this data,
+    the greater access speed to shared memory will increase the
+    performance. Do not forget the synchronization! }
+\item Before processing each chunk, copy the local particle's
+  position into the shared memory array and synchronize.
+\end{enumerate}
+
+\section{Tuning}
+In this task, we consider micro-optimisations that can potentially
+make the program faster. Most parameters require empirically searching
+for the best value. Therefore, these are finishing touches on a porting project.
+
+\begin{enumerate}
+\item Using faster primitives for the inverse square root
+\item Eliminating unnecessary conditionals
+\item \Verb!#pragma unroll <n>! for relevant loops.
+\item Tuning the launch parameters of the kernels.
+\end{enumerate}
+
+\section{Back to the CPU Code}
+After the previous changes, the CUDA code is likely many times faster
+than the CPU code. This is a common pattern, when code is ported and 
+optimised. Often, speed-up numbers of accelerated applications are 
+overestimated since the first serious attempts at optimisation went 
+into the GPU code. 
+
+Go through the list of optimisations above, decide if they make sense
+for the CPU and if so implement them. Measure the utilisation of the
+most constraining resource. Make sure that the generated code is vectorised 
+and uses the memory hierarchy efficiently.
+
+Next, add shared memory parallelisation using OpenMP and tune the OpenMP 
+parameters for thread placement and memory locality. Find the optimal
+number of threads.\marginnote{%
+Choose your measure of 'optimal' as either efficiency or time to solution.}
+Can more parallelism be extracted?
+Document the final product using hardware performance counters and compare
+its performance against the GPU implementation.
+
+\section{Optional: MPI Parallelisation}
+If you have time left, you can consider doing the following task.  Design a
+method for parallelising this problem to multiple GPUs over
+MPI. Discuss and explore scalability and options for improvement. 
+You might want to consider a different algorithm and give a quick analysis.
+\end{document}
